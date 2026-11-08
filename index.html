@@ -199,6 +199,8 @@ video{width:100%;height:100%;object-fit:contain;background:#000;}
 .briefing-obj-lbl{font-family:'IBM Plex Mono',monospace;font-size:.58rem;font-weight:700;color:var(--teal);letter-spacing:.05em;text-transform:uppercase;margin-bottom:4px;}
 .briefing-obj-box{background:var(--light);border-left:3px solid var(--navy);padding:8px 10px;font-size:.74rem;line-height:1.45;border-radius:0 4px 4px 0;margin-bottom:10px;}
 .briefing-prereq{margin-bottom:10px;}
+.wstep.wstep-active{outline:3px solid var(--amber);outline-offset:-1px;box-shadow:0 4px 14px rgba(198,89,17,.25);}
+.wstep .wstep-hdr:hover{background:rgba(198,89,17,.06);}
 .briefing-intro{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:24px;align-items:start;margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid #E2E5EA;}
 .briefing-intro .briefing-obj-box{margin-bottom:0;}
 .briefing-testhead{margin-bottom:12px;}
@@ -522,7 +524,7 @@ body{-webkit-user-select:none;-moz-user-select:none;user-select:none;}
             <p>Video loads automatically<br>when a procedure with a<br>screen recording is selected.<br><br>
             Choose a domain and procedure<br>from the sidebar on the left.</p>
           </div>
-          <video id="mainVid" style="display:none" controls muted></video>
+          <video id="mainVid" style="display:none" controls></video>
         </div>
         <div class="vid-footer"><div class="vid-finfo" id="vidFInfo">Configure B2_BASE in script with your Backblaze bucket URL</div></div>
         <div class="vid-howto">
@@ -1044,7 +1046,8 @@ function renderWalkthrough(p) {
 function buildWalkStep(s, idx) {
   const card = document.createElement('div'); card.className = 'wstep'; card.id = 'wstep-'+idx;
 
-  const hdr = document.createElement('div'); hdr.className = 'wstep-hdr'; hdr.style.cursor = 'default';
+  const hdr = document.createElement('div'); hdr.className = 'wstep-hdr'; hdr.style.cursor = 'pointer'; hdr.title = 'Play the video from this step';
+  hdr.onclick = () => playFromStep(idx);
   hdr.innerHTML = `<div class="wstep-badge">S${String(s.num).padStart(2,'0')}</div><div class="wstep-title">${esc(s.title)}</div>`;
   card.appendChild(hdr);
 
@@ -1203,6 +1206,48 @@ function stopSpeaking() {
   if (window.speechSynthesis) window.speechSynthesis.cancel();
 }
 
+// ── STEP SYNC ── Highlights the step the video is currently on and lets the
+// trainee click a step to play from there. Uses stamped timestamps when a
+// procedure has them; otherwise estimates each step's start from the length
+// of its narration text (intro + each step + closing, read at a steady pace).
+const SYNC = { proc:null, times:[], cur:-1 };
+function computeStepTimes() {
+  const vid = document.getElementById('mainVid'); const p = SYNC.proc;
+  if (!p || !p.steps || !p.steps.length || !vid.duration || !isFinite(vid.duration)) return;
+  const stamped = p.steps.map(s => parseFloat(s.timestamp) || 0);
+  if (stamped.slice(1).some(t => t > 0)) { SYNC.times = stamped; return; }
+  const len = t => (t || '').length;
+  const segs = [len(p.intro)].concat(p.steps.map(s => len(s.prose || s.body || s.title)), [len(p.closing)]);
+  const total = segs.reduce((a,b)=>a+b,0) || 1;
+  let acc = segs[0]; SYNC.times = p.steps.map((s,i) => { const t = vid.duration * acc / total; acc += segs[i+1]; return t; });
+}
+function playFromStep(i) {
+  const vid = document.getElementById('mainVid');
+  if (!vid.src) return;
+  if (!SYNC.times.length) computeStepTimes();
+  if (SYNC.times[i] === undefined) return;
+  stopSpeaking();
+  vid.currentTime = SYNC.times[i];
+  vid.play().catch(()=>{});
+}
+function syncActiveStep() {
+  const vid = document.getElementById('mainVid');
+  if (!SYNC.times.length) computeStepTimes();
+  if (!SYNC.times.length) return;
+  let i = -1; SYNC.times.forEach((t,k) => { if (vid.currentTime + 0.25 >= t) i = k; });
+  if (i === SYNC.cur) return;
+  const prev = document.getElementById('wstep-'+SYNC.cur); if (prev) prev.classList.remove('wstep-active');
+  SYNC.cur = i;
+  const el = document.getElementById('wstep-'+i);
+  if (el) { el.classList.add('wstep-active'); el.scrollIntoView({block:'nearest', behavior:'smooth'}); }
+}
+(function(){
+  const vid = document.getElementById('mainVid');
+  vid.addEventListener('loadedmetadata', computeStepTimes);
+  vid.addEventListener('timeupdate', syncActiveStep);
+  vid.addEventListener('play', stopSpeaking);
+})();
+
 // ── VIDEO ────────────────────────────────────────────────────────────────────
 function loadVideo(p) {
   const vid = document.getElementById('mainVid');
@@ -1211,7 +1256,8 @@ function loadVideo(p) {
   // The video's own baked-in narration is what caused the sync problem in
   // the first place — it stays muted permanently. Narration now comes from
   // the Listen buttons instead, read live from the actual step text.
-  vid.muted = true;
+  vid.muted = false; // narration audio plays by default (user request, Nov 2026)
+  SYNC.proc = p; SYNC.times = []; SYNC.cur = -1;
 
   if (p.noVideoEver) {
     vid.pause(); vid.removeAttribute('src');
