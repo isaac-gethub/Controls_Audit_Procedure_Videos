@@ -480,7 +480,7 @@ body{-webkit-user-select:none;-moz-user-select:none;user-select:none;}
   </div>
   <div class="hdr-right">
     <div class="badge" id="curBadge">TIB-AUD-CTL-001</div>
-    <button class="prod-btn" id="prodToggle" onclick="toggleProducer()">⚙ PRODUCER</button>
+    <button class="prod-btn" id="prodToggle" style="display:none" onclick="toggleProducer()">⚙ PRODUCER</button>
   </div>
 </div>
 
@@ -1214,12 +1214,13 @@ const SYNC = { proc:null, times:[], cur:-1 };
 function computeStepTimes() {
   const vid = document.getElementById('mainVid'); const p = SYNC.proc;
   if (!p || !p.steps || !p.steps.length || !vid.duration || !isFinite(vid.duration)) return;
-  const stamped = p.steps.map(s => parseFloat(s.timestamp) || 0);
-  if (stamped.slice(1).some(t => t > 0)) { SYNC.times = stamped; return; }
   const len = t => (t || '').length;
   const segs = [len(p.intro)].concat(p.steps.map(s => len(s.prose || s.body || s.title)), [len(p.closing)]);
   const total = segs.reduce((a,b)=>a+b,0) || 1;
-  let acc = segs[0]; SYNC.times = p.steps.map((s,i) => { const t = vid.duration * acc / total; acc += segs[i+1]; return t; });
+  let acc = segs[0];
+  const est = p.steps.map((s,i) => { const t = vid.duration * acc / total; acc += segs[i+1]; return t; });
+  // A saved Producer stamp always wins; estimates only fill steps not yet stamped.
+  SYNC.times = p.steps.map((s,i) => (s.stamped ? parseFloat(s.timestamp) : est[i]));
 }
 function playFromStep(i) {
   const vid = document.getElementById('mainVid');
@@ -1333,11 +1334,44 @@ function stampTime() {
   const si = stamps.length;
   if (si >= p.steps.length) { alert('All steps stamped. Export JSON.'); return; }
   stamps.push({si, t});
-  p.steps[si].timestamp = t;
+  p.steps[si].timestamp = t; p.steps[si].stamped = true;
+  SYNC.times = []; SYNC.cur = -1;
   const badge = document.getElementById('tsbadge-'+si);
   if (badge) badge.textContent = fmtTime(t);
   updateStampsUI();
-  document.getElementById('prodInfo').textContent = stamps.length+'/'+p.steps.length+' stamped';
+  const info = document.getElementById('prodInfo');
+  info.textContent = stamps.length+'/'+p.steps.length+' stamped — saving…';
+  const code = activeCode;
+  _supa.auth.getUser().then(({ data }) => _supa.from('aud_step_timestamps').upsert({
+    procedure_code: code, step_index: si, timestamp_s: t,
+    updated_by: data && data.user ? data.user.email : null, updated_at: new Date().toISOString()
+  })).then(({ error }) => {
+    info.textContent = stamps.length+'/'+p.steps.length+' stamped — ' + (error ? 'NOT SAVED: ' + error.message : 'saved ✓');
+  });
+}
+
+// Loads every saved Producer stamp once after sign-in, so all trainees get exact sync.
+async function loadSavedStamps() {
+  try {
+    const { data, error } = await _supa.from('aud_step_timestamps').select('procedure_code,step_index,timestamp_s');
+    if (error || !data) return;
+    data.forEach(r => {
+      const p = DATA[r.procedure_code];
+      if (p && p.steps && p.steps[r.step_index]) { p.steps[r.step_index].timestamp = parseFloat(r.timestamp_s); p.steps[r.step_index].stamped = true; }
+    });
+    SYNC.times = []; SYNC.cur = -1;
+  } catch (e) {}
+}
+// Producer mode is only for TIB staff (staff_users) and the super admin.
+async function setProducerAccess(user) {
+  const btn = document.getElementById('prodToggle');
+  let ok = false;
+  try {
+    const email = (user && user.email || '').toLowerCase();
+    if (email === SUPER_ADMIN) ok = true;
+    else if (email) { const { data } = await _supa.rpc('is_staff', { check_email: user.email }); ok = !!data; }
+  } catch (e) {}
+  if (btn) btn.style.display = ok ? '' : 'none';
 }
 
 function updateStampsUI() {
@@ -1360,8 +1394,12 @@ function exportJSON() {
 function resetStamps() {
   if (!confirm('Reset all stamps for '+activeCode+'?')) return;
   stamps = [];
+  _supa.from('aud_step_timestamps').delete().eq('procedure_code', activeCode).then(({ error }) => {
+    document.getElementById('prodInfo').textContent = error ? 'Reset NOT saved: ' + error.message : 'Stamps cleared — play video → STAMP at each step start';
+  });
+  SYNC.times = []; SYNC.cur = -1;
   if (activeCode) DATA[activeCode].steps.forEach((s,i) => {
-    s.timestamp = 0;
+    s.timestamp = 0; s.stamped = false;
     const b = document.getElementById('tsbadge-'+i); if (b) b.textContent='—';
   });
   updateStampsUI();
@@ -1546,6 +1584,8 @@ async function checkEnrollment(user) {
 // ── UNLOCK APP ───────────────────────────────────────────────────────────
 function unlockApp(user) {
   document.getElementById('auth-screen').classList.add('hidden');
+  loadSavedStamps();
+  setProducerAccess(user);
   const app = document.getElementById('main-app');
   app.classList.add('unlocked');
 
