@@ -199,6 +199,10 @@ video{width:100%;height:100%;object-fit:contain;background:#000;}
 .briefing-obj-lbl{font-family:'IBM Plex Mono',monospace;font-size:.58rem;font-weight:700;color:var(--teal);letter-spacing:.05em;text-transform:uppercase;margin-bottom:4px;}
 .briefing-obj-box{background:var(--light);border-left:3px solid var(--navy);padding:8px 10px;font-size:.74rem;line-height:1.45;border-radius:0 4px 4px 0;margin-bottom:10px;}
 .briefing-prereq{margin-bottom:10px;}
+.briefing-intro{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:24px;align-items:start;margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid #E2E5EA;}
+.briefing-intro .briefing-obj-box{margin-bottom:0;}
+.briefing-intro .briefing-prereq{margin-bottom:0;}
+@media (max-width:880px){.briefing-intro{grid-template-columns:1fr;gap:12px;}}
 .briefing-section-lbl{font-family:'IBM Plex Mono',monospace;font-size:.64rem;font-weight:700;color:var(--navy);letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px;}
 .briefing-tasklist{list-style:none;counter-reset:tasknum;margin-bottom:20px;display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start;}
 .briefing-task{display:flex;gap:12px;padding:14px 16px;border:1px solid var(--border);border-radius:6px;background:#FAFBFF;align-items:flex-start;height:100%;}
@@ -867,8 +871,12 @@ function renderBriefing(p) {
   sgWrap.innerHTML = '<span class="studyguide-icon">📥</span><span class="studyguide-text"><b>Offline Study Guide — Domain ' + domainCode + '</b><span class="studyguide-desc">Download the Word document covering all Domain ' + domainCode + ' procedures — read before or after the videos.</span></span>';
   scroll.appendChild(sgWrap);
 
-  mk(scroll,'div','briefing-obj-lbl','OBJECTIVE');
-  mk(scroll,'div','briefing-obj-box', p.objective || '—');
+  // Objective + Prerequisites now sit at the top of the right (steps) column.
+  const intro = document.createElement('div'); intro.className = 'briefing-intro';
+  const objWrap = document.createElement('div'); objWrap.className = 'briefing-intro-obj';
+  mk(objWrap,'div','briefing-obj-lbl','OBJECTIVE');
+  mk(objWrap,'div','briefing-obj-box', p.objective || '—');
+  intro.appendChild(objWrap);
 
   if (p.prerequisites && p.prerequisites.length) {
     const wrap = document.createElement('div'); wrap.className = 'briefing-prereq';
@@ -876,7 +884,7 @@ function renderBriefing(p) {
     const ul = document.createElement('ul'); ul.className='prereq-list';
     p.prerequisites.forEach(pr => { const li=document.createElement('li'); li.textContent=pr; ul.appendChild(li); });
     wrap.appendChild(ul);
-    scroll.appendChild(wrap);
+    intro.appendChild(wrap);
   }
 
   if (p.boilerplate && p.boilerplate.length) {
@@ -906,6 +914,7 @@ function renderBriefing(p) {
   // of scroll length (one paragraph per step) uses the available width
   // instead of running down a single narrow column. ──
   const right = document.createElement('div'); right.className = 'briefing-right';
+  right.appendChild(intro);
   if (p.steps && p.steps.length) {
     mk(right,'div','briefing-section-lbl', 'WHAT YOU\u2019LL SEE IN THIS VIDEO — ' + p.steps.length + ' STEPS');
     const list = document.createElement('ul'); list.className = 'briefing-tasklist';
